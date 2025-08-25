@@ -1,0 +1,34 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Build and push Docker image
+      run: |
+        echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/rag-fastapi:latest -f Dockerfile.fastapi .
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/rag-streamlit:latest -f Dockerfile.streamlit .
+        docker push ${{ secrets.DOCKER_USERNAME }}/rag-fastapi:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/rag-streamlit:latest
+    
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_KEY }}
+        script: |
+          cd /home/ubuntu/rag-system
+          git pull origin main
+          docker-compose pull
+          docker-compose down
+          docker-compose up -d
+          docker system prune -f
