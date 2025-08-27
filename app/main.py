@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import os
@@ -43,6 +45,7 @@ app = FastAPI(
 # Add rate limiting middleware
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -118,8 +121,10 @@ async def upload_file(
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
-    if file.size > settings.MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Max size: {settings.MAX_FILE_SIZE} bytes")
+    content = await file.read()
+    if len(content) > settings.MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large")
+    await file.seek(0)  # Reset file pointer    
     
     try:
         # Process file

@@ -9,11 +9,9 @@ from app.utils.logger import logger
 class EmbeddingService:
     def __init__(self):
         # Initialize Pinecone
-        pinecone.init(
-            api_key=settings.PINECONE_API_KEY,
-            environment=settings.PINECONE_ENVIRONMENT
-        )
-        self.index = pinecone.Index(settings.PINECONE_INDEX_NAME)
+        from pinecone import Pinecone
+        pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+        self.index = pc.Index(settings.PINECONE_INDEX_NAME)
         
         # Initialize Bedrock for embeddings
         self.bedrock_client = boto3.client(
