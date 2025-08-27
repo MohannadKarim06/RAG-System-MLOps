@@ -9,14 +9,17 @@ import time
 from datetime import datetime
 import asyncio
 from contextlib import asynccontextmanager
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
 from app.database import Database, User
 from app.services.file_service import FileService
 from app.services.rag_service import RAGService
-from app.middleware.rate_limiter import RateLimiter
 from app.utils.logger import logger
-from app.utils.exceptions import RateLimitException, UserNotFoundException
+from app.utils.exceptions import UserNotFoundException
 
 # Initialize services
 @asynccontextmanager
@@ -27,12 +30,19 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await Database.close()
 
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title="RAG Document QA API",
     description="Document upload and question answering with RAG",
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Add rate limiting middleware
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,7 +54,6 @@ app.add_middleware(
 
 # Security
 security = HTTPBearer()
-rate_limiter = RateLimiter()
 
 # Services
 file_service = FileService()
@@ -69,19 +78,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user = await Database.get_user_by_api_key(api_key)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    return user
-
-# Dependency for rate limiting
-async def check_rate_limit(request: Request, user: User = Depends(get_current_user)):
-    client_ip = request.client.host
-    user_id = user.id
-    
-    if not await rate_limiter.check_rate_limit(f"upload_{user_id}", 5, 3600):  # 5 uploads per hour
-        raise RateLimitException("Upload rate limit exceeded")
-    
-    if not await rate_limiter.check_rate_limit(f"query_{user_id}", 100, 3600):  # 100 queries per hour
-        raise RateLimitException("Query rate limit exceeded")
-    
     return user
 
 # Routes
@@ -110,9 +106,11 @@ async def health_check():
     }
 
 @app.post("/upload")
+@limiter.limit("5/hour")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
-    user: User = Depends(check_rate_limit)
+    user: User = Depends(get_current_user)
 ):
     """Upload and process a document"""
     
@@ -144,13 +142,15 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @app.post("/ask")
+@limiter.limit("100/hour")
 async def ask_question(
-    request: QueryRequest,
-    user: User = Depends(check_rate_limit)
+    request: Request,
+    request_body: QueryRequest,
+    user: User = Depends(get_current_user)
 ):
     """Ask a question about uploaded documents"""
     
-    if len(request.question) > settings.MAX_QUERY_LENGTH:
+    if len(request_body.question) > settings.MAX_QUERY_LENGTH:
         raise HTTPException(status_code=400, detail="Query too long")
     
     try:
@@ -160,7 +160,7 @@ async def ask_question(
         
         # Generate response
         response = await rag_service.generate_response(
-            question=request.question,
+            question=request_body.question,
             user_id=user.id,
             system_prompt=system_prompt
         )
@@ -245,9 +245,16 @@ async def update_config(
         raise HTTPException(status_code=500, detail="Failed to update configuration")
 
 # Exception handlers
-@app.exception_handler(RateLimitException)
-async def rate_limit_handler(request: Request, exc: RateLimitException):
-    return HTTPException(status_code=429, detail=str(exc))
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    response = JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": f"Rate limit exceeded: {exc.detail}"}
+    )
+    response = request.app.state.limiter._inject_headers(
+        response, request.state.view_rate_limit
+    )
+    return response
 
 if __name__ == "__main__":
     import uvicorn
