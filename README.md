@@ -32,6 +32,10 @@ The RAG (Retrieval-Augmented Generation) System is a production-ready MLOps plat
 - **Production Ready**: Containerized deployment with monitoring and security
 - **Scalable Architecture**: Microservices design with load balancing
 
+![Alt Text](images/folder/filename.png)
+
+![Alt Text](images/folder/filename.png)
+
 ## 🏗️ Architecture
 
 ### High-Level Architecture
