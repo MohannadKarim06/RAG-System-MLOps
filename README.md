@@ -34,8 +34,6 @@ The RAG (Retrieval-Augmented Generation) System is a production-ready MLOps plat
 
 ![Alt Text](images/folder/filename.png)
 
-![Alt Text](images/folder/filename.png)
-
 ## 🏗️ Architecture
 
 ### High-Level Architecture
